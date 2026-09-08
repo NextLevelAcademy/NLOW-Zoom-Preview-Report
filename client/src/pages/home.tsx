@@ -16,11 +16,24 @@ import {
   generateReport,
   type UploadedFiles,
 } from "@/lib/reportGenerator";
+import { deriveMetrics } from "@/lib/deriveMetrics";
 import { downloadExcelReport } from "@/lib/excelExport";
-import { buildBroadcasts } from "@/lib/watiBroadcast";
+import {
+  buildBroadcasts,
+  type ContactPatch,
+  type WatiSourceType,
+} from "@/lib/watiBroadcast";
 import { BroadcastPanel } from "@/components/BroadcastPanel";
+import {
+  CountrySelect,
+  DeleteRowButton,
+  EditableBool,
+  EditableNumber,
+  EditableText,
+} from "@/components/EditableCell";
 import type {
   CountryBreakdown,
+  OptInRow,
   ReportData,
   SessionDetails,
   ShowUpMergeRow,
@@ -576,10 +589,12 @@ function StatCard({
   value,
   pct,
   label,
+  subtext,
 }: {
   value: string | number;
   pct?: string;
   label: string;
+  subtext?: string;
 }) {
   return (
     <div className="rounded-xl border p-5 flex flex-col gap-1 border-green-400 bg-green-50 dark:bg-green-950/20">
@@ -592,6 +607,9 @@ function StatCard({
         </p>
       )}
       <p className="text-sm text-muted-foreground font-medium">{label}</p>
+      {subtext && (
+        <p className="text-[11px] text-muted-foreground leading-snug">{subtext}</p>
+      )}
     </div>
   );
 }
@@ -677,60 +695,131 @@ function CountryTable({
   );
 }
 
-function CountryPill({ value }: { value: string }) {
+const SIGN_UP_SOURCE_OPTIONS: SignUpRow["source"][] = ["Stripe", "PayPal", "BT"];
+
+function sourceLabel(source: SignUpRow["source"]): string {
+  if (source === "PayPal") return "ThriveCart – PayPal";
+  if (source === "BT") return "Bank Transfer – PayNow";
+  return "ThriveCart – Stripe";
+}
+
+function OptInTable({
+  rows,
+  onUpdate,
+  onDelete,
+}: {
+  rows: OptInRow[];
+  onUpdate: (idx: number, patch: Partial<OptInRow>) => void;
+  onDelete: (idx: number) => void;
+}) {
+  const invalidCount = rows.filter((r) => r.country === "INVALID").length;
   return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-foreground">
-      {value}
-    </span>
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h3 className="font-semibold text-sm text-foreground">
+          Opt In ({rows.length})
+        </h3>
+        <span className="text-xs text-muted-foreground">
+          {invalidCount > 0 && (
+            <span className="text-red-600 dark:text-red-400 font-medium">
+              {invalidCount} flagged invalid
+            </span>
+          )}{" "}
+          · click any cell to edit
+        </span>
+      </div>
+      <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 sticky top-0">
+            <tr>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">#</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Name</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Email</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Phone</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Country</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Show Up</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Sign Up</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr
+                key={`${r.email}-${i}`}
+                className={[
+                  "border-t border-border/50",
+                  r.country === "INVALID" ? "bg-red-50/50 dark:bg-red-950/10" : "",
+                ].join(" ")}
+                data-testid={`optin-row-${i}`}
+              >
+                <td className="px-4 py-1 text-muted-foreground">{i + 1}</td>
+                <td className="px-4 py-1 font-medium text-foreground">
+                  <EditableText
+                    value={r.fullName}
+                    onCommit={(v) => onUpdate(i, { fullName: v, firstName: v })}
+                    testId={`optin-name-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 text-muted-foreground">
+                  <EditableText
+                    value={r.email}
+                    onCommit={(v) => onUpdate(i, { email: v })}
+                    testId={`optin-email-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableText
+                    value={r.fullPhone}
+                    onCommit={(v) => onUpdate(i, { fullPhone: v })}
+                    testId={`optin-phone-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <CountrySelect
+                    value={r.country}
+                    onCommit={(v) => onUpdate(i, { country: v as OptInRow["country"] })}
+                    testId={`optin-country-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <EditableBool
+                    checked={r.showedUp}
+                    onCommit={(v) => onUpdate(i, { showedUp: v })}
+                    testId={`optin-showedup-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <EditableBool
+                    checked={r.signedUp}
+                    onCommit={(v) => onUpdate(i, { signedUp: v })}
+                    testId={`optin-signedup-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <DeleteRowButton onClick={() => onDelete(i)} testId={`optin-delete-${i}`} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
-function YesPill() {
-  return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">
-      ✓ Yes
-    </span>
-  );
-}
+const SHOW_UP_SOURCE_OPTIONS: ShowUpMergeRow["source"][] = [
+  "Keap", "Registration", "Unknown",
+];
 
-function SourcePill({ source }: { source: ShowUpMergeRow["source"] }) {
-  const colorMap: Record<string, string> = {
-    Keap: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400",
-    Registration:
-      "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400",
-    Unknown:
-      "bg-gray-100 dark:bg-gray-900/40 text-gray-700 dark:text-gray-400",
-  };
-  return (
-    <span
-      className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${colorMap[source]}`}
-    >
-      {source}
-    </span>
-  );
-}
-
-function SignUpSourcePill({ source }: { source: SignUpRow["source"] }) {
-  if (source === "BT")
-    return (
-      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">
-        PayNow
-      </span>
-    );
-  if (source === "ThriveCart+BT")
-    return (
-      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400">
-        ThriveCart + PayNow
-      </span>
-    );
-  return (
-    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400">
-      ThriveCart
-    </span>
-  );
-}
-
-function ShowUpMergeTable({ rows }: { rows: ShowUpMergeRow[] }) {
+function ShowUpMergeTable({
+  rows,
+  onUpdate,
+  onDelete,
+}: {
+  rows: ShowUpMergeRow[];
+  onUpdate: (idx: number, patch: Partial<ShowUpMergeRow>) => void;
+  onDelete: (idx: number) => void;
+}) {
   const signedUpCount = rows.filter((r) => r.signedUp).length;
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -739,12 +828,12 @@ function ShowUpMergeTable({ rows }: { rows: ShowUpMergeRow[] }) {
           Show Up Merge ({rows.length})
         </h3>
         <span className="text-xs text-primary font-medium">
-          {signedUpCount} signed up
+          {signedUpCount} signed up · click any cell to edit
         </span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
         <table className="w-full text-xs">
-          <thead className="bg-muted/50">
+          <thead className="bg-muted/50 sticky top-0">
             <tr>
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">
                 #
@@ -770,6 +859,7 @@ function ShowUpMergeTable({ rows }: { rows: ShowUpMergeRow[] }) {
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">
                 Signed Up
               </th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody>
@@ -780,21 +870,70 @@ function ShowUpMergeTable({ rows }: { rows: ShowUpMergeRow[] }) {
                   "border-t border-border/50",
                   r.signedUp ? "bg-green-50/50 dark:bg-green-950/10" : "",
                 ].join(" ")}
+                data-testid={`showup-row-${i}`}
               >
-                <td className="px-4 py-2 text-muted-foreground">{i + 1}</td>
-                <td className="px-4 py-2 font-medium text-foreground">
-                  {r.fullName}
+                <td className="px-4 py-1 text-muted-foreground">{i + 1}</td>
+                <td className="px-4 py-1 font-medium text-foreground">
+                  <EditableText
+                    value={r.fullName}
+                    onCommit={(v) => onUpdate(i, { fullName: v })}
+                    testId={`showup-name-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2 text-muted-foreground">{r.email}</td>
-                <td className="px-4 py-2 tabular-nums">{r.fullPhone}</td>
-                <td className="px-4 py-2">
-                  <CountryPill value={r.country} />
+                <td className="px-4 py-1 text-muted-foreground">
+                  <EditableText
+                    value={r.email}
+                    onCommit={(v) => onUpdate(i, { email: v })}
+                    testId={`showup-email-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2 tabular-nums">{r.durationMinutes}</td>
-                <td className="px-4 py-2">
-                  <SourcePill source={r.source} />
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableText
+                    value={r.fullPhone}
+                    onCommit={(v) => onUpdate(i, { fullPhone: v })}
+                    testId={`showup-phone-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2">{r.signedUp && <YesPill />}</td>
+                <td className="px-4 py-1">
+                  <CountrySelect
+                    value={r.country}
+                    onCommit={(v) => onUpdate(i, { country: v as ShowUpMergeRow["country"] })}
+                    testId={`showup-country-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableNumber
+                    value={r.durationMinutes}
+                    onCommit={(v) => onUpdate(i, { durationMinutes: v })}
+                    testId={`showup-duration-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <select
+                    value={r.source}
+                    data-testid={`showup-source-${i}`}
+                    onChange={(e) =>
+                      onUpdate(i, { source: e.target.value as ShowUpMergeRow["source"] })
+                    }
+                    className="text-[10px] font-medium rounded px-1 py-0.5 border border-transparent bg-muted hover:border-border focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  >
+                    {SHOW_UP_SOURCE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-4 py-1">
+                  <EditableBool
+                    checked={r.signedUp}
+                    onCommit={(v) => onUpdate(i, { signedUp: v })}
+                    testId={`showup-signedup-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <DeleteRowButton onClick={() => onDelete(i)} testId={`showup-delete-${i}`} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -804,17 +943,26 @@ function ShowUpMergeTable({ rows }: { rows: ShowUpMergeRow[] }) {
   );
 }
 
-function SignUpTable({ rows }: { rows: SignUpRow[] }) {
+function SignUpTable({
+  rows,
+  onUpdate,
+  onDelete,
+}: {
+  rows: SignUpRow[];
+  onUpdate: (idx: number, patch: Partial<SignUpRow>) => void;
+  onDelete: (idx: number) => void;
+}) {
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-border">
+      <div className="px-5 py-4 border-b border-border flex items-center justify-between">
         <h3 className="font-semibold text-sm text-foreground">
           Sign Up ({rows.length})
         </h3>
+        <span className="text-xs text-muted-foreground">click any cell to edit</span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
         <table className="w-full text-xs">
-          <thead className="bg-muted/50">
+          <thead className="bg-muted/50 sticky top-0">
             <tr>
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">
                 #
@@ -840,30 +988,75 @@ function SignUpTable({ rows }: { rows: SignUpRow[] }) {
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">
                 Show Up
               </th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap"></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={`${r.email}-${i}`} className="border-t border-border/50">
-                <td className="px-4 py-2 text-muted-foreground">{i + 1}</td>
-                <td className="px-4 py-2 font-medium text-foreground">
-                  {r.fullName}
+              <tr key={`${r.email}-${i}`} className="border-t border-border/50" data-testid={`signup-row-${i}`}>
+                <td className="px-4 py-1 text-muted-foreground">{i + 1}</td>
+                <td className="px-4 py-1 font-medium text-foreground">
+                  <EditableText
+                    value={r.fullName}
+                    onCommit={(v) => onUpdate(i, { fullName: v })}
+                    testId={`signup-name-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2 text-muted-foreground">{r.email}</td>
-                <td className="px-4 py-2 tabular-nums">{r.fullPhone}</td>
-                <td className="px-4 py-2">
-                  <CountryPill value={r.country} />
+                <td className="px-4 py-1 text-muted-foreground">
+                  <EditableText
+                    value={r.email}
+                    onCommit={(v) => onUpdate(i, { email: v })}
+                    testId={`signup-email-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {r.intake
-                    ? r.intake.charAt(0).toUpperCase() +
-                      r.intake.slice(1).toLowerCase()
-                    : ""}
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableText
+                    value={r.fullPhone}
+                    onCommit={(v) => onUpdate(i, { fullPhone: v })}
+                    testId={`signup-phone-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2">
-                  <SignUpSourcePill source={r.source} />
+                <td className="px-4 py-1">
+                  <CountrySelect
+                    value={r.country}
+                    onCommit={(v) => onUpdate(i, { country: v as SignUpRow["country"] })}
+                    testId={`signup-country-${i}`}
+                  />
                 </td>
-                <td className="px-4 py-2">{r.showedUp && <YesPill />}</td>
+                <td className="px-4 py-1 text-muted-foreground">
+                  <EditableText
+                    value={r.intake}
+                    onCommit={(v) => onUpdate(i, { intake: v })}
+                    placeholder="e.g. May"
+                    testId={`signup-intake-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <select
+                    value={r.source}
+                    data-testid={`signup-source-${i}`}
+                    onChange={(e) =>
+                      onUpdate(i, { source: e.target.value as SignUpRow["source"] })
+                    }
+                    className="text-[10px] font-medium rounded px-1 py-0.5 border border-transparent bg-muted hover:border-border focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  >
+                    {SIGN_UP_SOURCE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {sourceLabel(s)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td className="px-4 py-1">
+                  <EditableBool
+                    checked={r.showedUp}
+                    onCommit={(v) => onUpdate(i, { showedUp: v })}
+                    testId={`signup-showedup-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <DeleteRowButton onClick={() => onDelete(i)} testId={`signup-delete-${i}`} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -982,21 +1175,27 @@ function StudentListTable({ rows }: { rows: StudentListRow[] }) {
 
 function WatiSection({
   broadcasts,
+  onUpdateContact,
+  onDeleteContact,
 }: {
   broadcasts: ReturnType<typeof buildBroadcasts>;
+  onUpdateContact: (sourceType: WatiSourceType, currentEmail: string, patch: ContactPatch) => void;
+  onDeleteContact: (sourceType: WatiSourceType, email: string) => void;
 }) {
-  // Dynamic tab keys: "welcome:<index>" for each VW date, or "no_show_up".
+  // Dynamic tab keys: "welcome:<index>" for each VW date, or "no_show_up"/"showup_no_buy".
   const welcomeKeys = broadcasts.welcomes.map((_, i) => `welcome:${i}`);
   const initialTab = welcomeKeys[0] ?? "no_show_up";
   const [tab, setTab] = useState<string>(initialTab);
 
   // If the VW dates change (add/remove/rename), snap the active tab back to a
   // valid one instead of leaving a stale index selected.
-  const validKeys = [...welcomeKeys, "no_show_up"];
-  if (!validKeys.includes(tab)) {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    setTimeout(() => setTab(initialTab), 0);
-  }
+  const validKeys = [...welcomeKeys, "no_show_up", "showup_no_buy"];
+  useEffect(() => {
+    if (!validKeys.includes(tab)) {
+      setTab(initialTab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [welcomeKeys.join("|")]);
 
   function tabBtn(key: string, label: string, count: number) {
     const active = tab === key;
@@ -1049,8 +1248,13 @@ function WatiSection({
             })}
             {tabBtn(
               "no_show_up",
-              "No Show Up",
+              "No-Show Follow-Up",
               broadcasts.no_show_up.contacts.length
+            )}
+            {tabBtn(
+              "showup_no_buy",
+              "Sales Follow-Up",
+              broadcasts.showup_no_buy.contacts.length
             )}
           </div>
           {tab.startsWith("welcome:") && (() => {
@@ -1060,24 +1264,29 @@ function WatiSection({
               <BroadcastPanel
                 key={`welcome:${idx}:${build.vwLabel ?? ""}`}
                 build={build}
+                sourceType="signUps"
+                onUpdateContact={onUpdateContact}
+                onDeleteContact={onDeleteContact}
               />
             ) : null;
           })()}
           {tab === "no_show_up" && (
-            <>
-              {(broadcasts.no_show_up.nlow4ExcludedCount ?? 0) > 0 && (
-                <div
-                  className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-sm px-4 py-2 flex items-center gap-2"
-                  data-testid="note-nlow4-excluded"
-                >
-                  <span>⚠</span>
-                  <span>
-                    {broadcasts.no_show_up.nlow4ExcludedCount} contact(s) removed (found in Tag 4 List)
-                  </span>
-                </div>
-              )}
-              <BroadcastPanel build={broadcasts.no_show_up} />
-            </>
+            <BroadcastPanel
+              key="no_show_up"
+              build={broadcasts.no_show_up}
+              sourceType="optIns"
+              onUpdateContact={onUpdateContact}
+              onDeleteContact={onDeleteContact}
+            />
+          )}
+          {tab === "showup_no_buy" && (
+            <BroadcastPanel
+              key="showup_no_buy"
+              build={broadcasts.showup_no_buy}
+              sourceType="showUps"
+              onUpdateContact={onUpdateContact}
+              onDeleteContact={onDeleteContact}
+            />
           )}
         </div>
       </div>
@@ -1088,12 +1297,140 @@ function WatiSection({
 function ReportView({
   report,
   broadcasts,
+  onReportChange,
 }: {
   report: ReportData;
   broadcasts: ReturnType<typeof buildBroadcasts>;
+  onReportChange: (next: ReportData) => void;
 }) {
   const m = report.metrics;
   const session = report.sessionDetails;
+  const [editingSession, setEditingSession] = useState(false);
+
+  // Recomputes every derived metric/breakdown from whatever Opt-In / Show Up
+  // / Sign Up rows and session details are current after an edit, so the
+  // on-screen numbers (and the Excel export, which reads this same state)
+  // always match what's in the tables.
+  function recompute(next: {
+    optIns?: OptInRow[];
+    showUpMerge?: ShowUpMergeRow[];
+    signUps?: SignUpRow[];
+    sessionDetails?: SessionDetails;
+  }) {
+    const optIns = next.optIns ?? report.optIns;
+    const showUpMerge = next.showUpMerge ?? report.showUpMerge;
+    const signUps = next.signUps ?? report.signUps;
+    const sessionDetails = next.sessionDetails ?? report.sessionDetails;
+    const derived = deriveMetrics(sessionDetails, optIns, showUpMerge, signUps);
+    onReportChange({
+      ...report,
+      sessionDetails,
+      optIns,
+      showUpMerge,
+      signUps,
+      ...derived,
+    });
+  }
+
+  function updateOptIn(idx: number, patch: Partial<OptInRow>) {
+    recompute({ optIns: report.optIns.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+  }
+  function deleteOptIn(idx: number) {
+    recompute({ optIns: report.optIns.filter((_, i) => i !== idx) });
+  }
+  function updateShowUp(idx: number, patch: Partial<ShowUpMergeRow>) {
+    recompute({ showUpMerge: report.showUpMerge.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+  }
+  function deleteShowUp(idx: number) {
+    recompute({ showUpMerge: report.showUpMerge.filter((_, i) => i !== idx) });
+  }
+  function updateSignUp(idx: number, patch: Partial<SignUpRow>) {
+    recompute({ signUps: report.signUps.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+  }
+  function deleteSignUp(idx: number) {
+    recompute({ signUps: report.signUps.filter((_, i) => i !== idx) });
+  }
+
+  // WATI broadcast contact editing. Each broadcast tab's contact list is a
+  // derived, filtered/deduped view over report.optIns / report.showUpMerge /
+  // report.signUps (see buildBroadcasts in watiBroadcast.ts) — there's no
+  // separate storage for it. So editing a contact here looks the person up
+  // by email in the matching source table and writes the edit through the
+  // same updateX/deleteX used by the main tables, exactly like editing them
+  // there directly. The broadcast list then re-derives on next render.
+  function updateBroadcastContact(
+    sourceType: WatiSourceType,
+    currentEmail: string,
+    patch: ContactPatch
+  ) {
+    const emailLc = currentEmail.toLowerCase();
+    if (sourceType === "optIns") {
+      const idx = report.optIns.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx === -1) return;
+      const cur = report.optIns[idx];
+      const rowPatch: Partial<OptInRow> = {};
+      if (patch.name !== undefined) {
+        rowPatch.fullName = patch.name;
+        rowPatch.firstName = patch.name;
+      }
+      if (patch.email !== undefined) rowPatch.email = patch.email;
+      if (patch.countryCode !== undefined || patch.phone !== undefined) {
+        const cc = patch.countryCode ?? cur.countryCode;
+        const ph = patch.phone ?? cur.phoneNumber;
+        rowPatch.countryCode = cc;
+        rowPatch.phoneNumber = ph;
+        rowPatch.fullPhone = `${cc}${ph}`;
+      }
+      updateOptIn(idx, rowPatch);
+    } else if (sourceType === "showUps") {
+      const idx = report.showUpMerge.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx === -1) return;
+      const cur = report.showUpMerge[idx];
+      const rowPatch: Partial<ShowUpMergeRow> = {};
+      if (patch.name !== undefined) rowPatch.fullName = patch.name;
+      if (patch.email !== undefined) rowPatch.email = patch.email;
+      if (patch.countryCode !== undefined || patch.phone !== undefined) {
+        const cc = patch.countryCode ?? cur.countryCode;
+        const ph = patch.phone ?? cur.phoneNumber;
+        rowPatch.countryCode = cc;
+        rowPatch.phoneNumber = ph;
+        rowPatch.fullPhone = `${cc}${ph}`;
+      }
+      updateShowUp(idx, rowPatch);
+    } else {
+      const idx = report.signUps.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx === -1) return;
+      const cur = report.signUps[idx];
+      const rowPatch: Partial<SignUpRow> = {};
+      if (patch.name !== undefined) rowPatch.fullName = patch.name;
+      if (patch.email !== undefined) rowPatch.email = patch.email;
+      if (patch.countryCode !== undefined || patch.phone !== undefined) {
+        const cc = patch.countryCode ?? cur.countryCode;
+        const ph = patch.phone ?? cur.phoneNumber;
+        rowPatch.countryCode = cc;
+        rowPatch.phoneNumber = ph;
+        rowPatch.fullPhone = `${cc}${ph}`;
+      }
+      updateSignUp(idx, rowPatch);
+    }
+  }
+  function deleteBroadcastContact(sourceType: WatiSourceType, email: string) {
+    const emailLc = email.toLowerCase();
+    if (sourceType === "optIns") {
+      const idx = report.optIns.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx !== -1) deleteOptIn(idx);
+    } else if (sourceType === "showUps") {
+      const idx = report.showUpMerge.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx !== -1) deleteShowUp(idx);
+    } else {
+      const idx = report.signUps.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+      if (idx !== -1) deleteSignUp(idx);
+    }
+  }
+
+  function updateSessionDetails(next: SessionDetails) {
+    recompute({ sessionDetails: next });
+  }
 
   const revenue = m.revenueTotal.toLocaleString("en-US", {
     minimumFractionDigits: 2,
@@ -1131,7 +1468,20 @@ function ReportView({
             maximumFractionDigits: 2,
           })}
         </p>
+        <button
+          onClick={() => setEditingSession((v) => !v)}
+          data-testid="button-toggle-edit-session"
+          className="mt-3 text-xs font-medium text-primary hover:underline"
+        >
+          {editingSession ? "Done editing session details" : "Edit session details"}
+        </button>
       </div>
+
+      {editingSession && (
+        <div className="mb-8">
+          <SessionDetailsCard session={session} setSession={updateSessionDetails} />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <StatCard value={m.optInCount} label="Opt In" />
@@ -1139,6 +1489,11 @@ function ReportView({
           value={m.showUpCount}
           pct={`${m.showUpPct.toFixed(1)}%`}
           label="Show Up"
+          subtext={
+            report.optInByCountry.INVALID > 0
+              ? `% of ${m.optInWithoutInvalidCount} valid opt-ins (${report.optInByCountry.INVALID} invalid excluded)`
+              : undefined
+          }
         />
         <StatCard
           value={m.attendanceAtPitch}
@@ -1195,14 +1550,22 @@ function ReportView({
       </div>
 
       <div className="mb-6">
-        <ShowUpMergeTable rows={report.showUpMerge} />
+        <OptInTable rows={report.optIns} onUpdate={updateOptIn} onDelete={deleteOptIn} />
       </div>
 
       <div className="mb-6">
-        <SignUpTable rows={report.signUps} />
+        <ShowUpMergeTable rows={report.showUpMerge} onUpdate={updateShowUp} onDelete={deleteShowUp} />
       </div>
 
-      <WatiSection broadcasts={broadcasts} />
+      <div className="mb-6">
+        <SignUpTable rows={report.signUps} onUpdate={updateSignUp} onDelete={deleteSignUp} />
+      </div>
+
+      <WatiSection
+        broadcasts={broadcasts}
+        onUpdateContact={updateBroadcastContact}
+        onDeleteContact={deleteBroadcastContact}
+      />
     </main>
   );
 }
@@ -1324,7 +1687,7 @@ export default function Home() {
         />
       )}
       {report && broadcasts && (
-        <ReportView report={report} broadcasts={broadcasts} />
+        <ReportView report={report} broadcasts={broadcasts} onReportChange={setReport} />
       )}
     </div>
   );

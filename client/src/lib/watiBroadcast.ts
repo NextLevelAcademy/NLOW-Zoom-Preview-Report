@@ -1,12 +1,24 @@
 import * as XLSX from "xlsx";
 import type {
   BroadcastType,
+  OptInRow,
   ReportData,
-  SignUpRow,
   ShowUpMergeRow,
+  SignUpRow,
   WatiContact,
 } from "../../../shared/schema";
-import { isValidForBroadcast, normalizePhone } from "./phone";
+import { normalizePhone } from "./phone";
+
+// Which report.* array a WATI broadcast tab's contacts are derived from —
+// used to route contact edits/deletes back to the right source table (see
+// updateBroadcastContact/deleteBroadcastContact in pages/home.tsx).
+export type WatiSourceType = "optIns" | "showUps" | "signUps";
+export type ContactPatch = {
+  name?: string;
+  countryCode?: string;
+  phone?: string;
+  email?: string;
+};
 
 export interface BroadcastDefinition {
   type: BroadcastType | string; // welcome builds use synthetic ids like "welcome:july"
@@ -20,7 +32,7 @@ export interface BroadcastDefinition {
 
 // Only static (non-welcome) broadcast definitions live in this map.
 // Welcome broadcasts are generated dynamically from the VW Date Entries.
-export const BROADCASTS: Record<"no_show_up", BroadcastDefinition> = {
+export const BROADCASTS: Record<"no_show_up" | "showup_no_buy", BroadcastDefinition> = {
   no_show_up: {
     type: "no_show_up",
     label: "No Show Up",
@@ -28,6 +40,14 @@ export const BROADCASTS: Record<"no_show_up", BroadcastDefinition> = {
       "Sales follow-up for opt-ins who did NOT attend the live session.",
     templateName: "l1nlow_noshow_v1",
     defaultBroadcastName: "NLOW_NoShow_Followup",
+  },
+  showup_no_buy: {
+    type: "showup_no_buy",
+    label: "Showed Up — No Sign-Up",
+    description:
+      "Attended live but did not sign up. Sales follow-up template.",
+    templateName: "Drip Campaign",
+    defaultBroadcastName: "NLOW_ShowUp_NoBuy_Followup",
   },
 };
 
@@ -65,7 +85,6 @@ export interface BroadcastBuild {
   type: BroadcastType | string;
   definition: BroadcastDefinition;
   contacts: WatiContact[];
-  excluded: { name: string; email: string; reason: string }[];
   // Populated only for no_show_up. Count of opt-ins filtered out via the
   // uploaded Tag 4 List CSV (NLOW4 contacts).
   nlow4ExcludedCount?: number;
@@ -76,6 +95,7 @@ export interface BroadcastBuild {
 export function buildBroadcasts(report: ReportData): {
   welcomes: BroadcastBuild[];
   no_show_up: BroadcastBuild;
+  showup_no_buy: BroadcastBuild;
 } {
   const allSignUps: SignUpRow[] = report.signUps;
 
@@ -120,21 +140,18 @@ export function buildBroadcasts(report: ReportData): {
   });
   const nlow4ExcludedCount = optInNoShow.length - optInNoShowFiltered.length;
 
-  const noShowUpBuild = optInRowsToBroadcast(
-    "no_show_up",
-    optInNoShowFiltered.map((k) => ({
-      fullName: k.fullName || k.email || "Customer",
-      email: k.email,
-      countryCode: k.countryCode,
-      phoneNumber: k.phoneNumber,
-      fullPhone: k.fullPhone,
-    }))
-  );
+  const noShowUpBuild = optInsToBroadcast("no_show_up", optInNoShowFiltered);
   noShowUpBuild.nlow4ExcludedCount = nlow4ExcludedCount;
+
+  // Sales Follow-Up: showed up live but never signed up.
+  const showUpNoBuy: ShowUpMergeRow[] = report.showUpMerge.filter(
+    (r) => !r.signedUp
+  );
 
   return {
     welcomes,
     no_show_up: noShowUpBuild,
+    showup_no_buy: showUpsToBroadcast("showup_no_buy", showUpNoBuy),
   };
 }
 
@@ -143,18 +160,9 @@ function signUpsToBroadcastWithDefinition(
   rows: SignUpRow[]
 ): BroadcastBuild {
   const contacts: WatiContact[] = [];
-  const excluded: { name: string; email: string; reason: string }[] = [];
 
   for (const r of rows) {
     const np = normalizePhone(r.phoneNumber || r.fullPhone, r.countryCode);
-    if (!isValidForBroadcast(np)) {
-      excluded.push({
-        name: r.fullName,
-        email: r.email,
-        reason: !np.phone ? "Missing phone" : "Invalid country code",
-      });
-      continue;
-    }
     contacts.push({
       name: r.fullName || r.email || "Customer",
       countryCode: np.countryCode,
@@ -165,6 +173,9 @@ function signUpsToBroadcastWithDefinition(
     });
   }
 
+  // Dedupe by full phone — avoids double-messaging the same WhatsApp number
+  // within one broadcast. Not a validity check: rows with no/invalid phone
+  // are still included so they can be reviewed and fixed manually.
   const seen = new Set<string>();
   const dedup = contacts.filter((c) => {
     const key = `${c.countryCode}${c.phone}`;
@@ -173,35 +184,18 @@ function signUpsToBroadcastWithDefinition(
     return true;
   });
 
-  return { type: definition.type, definition, contacts: dedup, excluded };
+  return { type: definition.type, definition, contacts: dedup };
 }
 
-interface OptInLike {
-  fullName: string;
-  email: string;
-  countryCode: string;
-  phoneNumber: string;
-  fullPhone: string;
-}
-
-function optInRowsToBroadcast(
+function optInsToBroadcast(
   type: "no_show_up",
-  rows: OptInLike[]
+  rows: OptInRow[]
 ): BroadcastBuild {
   const definition = BROADCASTS[type];
   const contacts: WatiContact[] = [];
-  const excluded: { name: string; email: string; reason: string }[] = [];
 
   for (const r of rows) {
     const np = normalizePhone(r.phoneNumber || r.fullPhone, r.countryCode);
-    if (!isValidForBroadcast(np)) {
-      excluded.push({
-        name: r.fullName,
-        email: r.email,
-        reason: !np.phone ? "Missing phone" : "Invalid country code",
-      });
-      continue;
-    }
     contacts.push({
       name: r.fullName || r.email || "Customer",
       countryCode: np.countryCode,
@@ -212,6 +206,7 @@ function optInRowsToBroadcast(
     });
   }
 
+  // Dedupe by full phone (see note above).
   const seen = new Set<string>();
   const dedup = contacts.filter((c) => {
     const key = `${c.countryCode}${c.phone}`;
@@ -220,7 +215,38 @@ function optInRowsToBroadcast(
     return true;
   });
 
-  return { type, definition, contacts: dedup, excluded };
+  return { type, definition, contacts: dedup };
+}
+
+function showUpsToBroadcast(
+  type: "showup_no_buy",
+  rows: ShowUpMergeRow[]
+): BroadcastBuild {
+  const definition = BROADCASTS[type];
+  const contacts: WatiContact[] = [];
+
+  for (const r of rows) {
+    const np = normalizePhone(r.phoneNumber || r.fullPhone, r.countryCode);
+    contacts.push({
+      name: r.fullName || r.email || "Attendee",
+      countryCode: np.countryCode,
+      phone: np.phone,
+      allowCampaign: true,
+      allowSMS: true,
+      email: r.email,
+    });
+  }
+
+  // Dedupe by full phone (see note above).
+  const seen = new Set<string>();
+  const dedup = contacts.filter((c) => {
+    const key = `${c.countryCode}${c.phone}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { type, definition, contacts: dedup };
 }
 
 export function downloadWatiCsv(build: BroadcastBuild): void {

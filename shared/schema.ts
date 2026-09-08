@@ -18,6 +18,7 @@ export const broadcastTypeSchema = z.enum([
   "may_signups",
   "june_signups",
   "no_show_up",
+  "showup_no_buy",
 ]);
 export type BroadcastType = z.infer<typeof broadcastTypeSchema>;
 
@@ -80,6 +81,7 @@ export interface OptInRow {
   country: CountryGroup;
   showedUp: boolean;
   signedUp: boolean;
+  source: "keap" | "showup_only"; // showup_only = appended from Show Up, unmatched to a Keap opt-in
 }
 
 /** Show up Merge row — a row per participant joined with Keap/Registration. */
@@ -117,7 +119,7 @@ export interface SignUpRow {
   phoneNumber: string;
   fullPhone: string;
   country: CountryGroup;
-  source: "ThriveCart" | "BT" | "ThriveCart+BT";
+  source: "Stripe" | "PayPal" | "BT"; // Stripe/PayPal = ThriveCart, by processor; BT = Bank Transfer (PayNow)
   pricingOption: string;
   intake: string; // "May", "June", or "" — derived from pricingOption / orderDate
   total: number;

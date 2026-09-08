@@ -194,10 +194,10 @@ export function downloadExcelReport(report: ReportData): void {
         ? s.intake.charAt(0).toUpperCase() + s.intake.slice(1).toLowerCase()
         : "",
       s.source === "BT"
-        ? "PayNow"
-        : s.source === "ThriveCart+BT"
-        ? "ThriveCart + PayNow"
-        : "ThriveCart",
+        ? "Bank Transfer – PayNow"
+        : s.source === "PayPal"
+        ? "ThriveCart – PayPal"
+        : "ThriveCart – Stripe",
       s.showedUp ? s.email : "",
     ]),
   ];
@@ -208,18 +208,20 @@ export function downloadExcelReport(report: ReportData): void {
   XLSX.utils.book_append_sheet(wb, signUpSheet, "Sign up");
 
   // ============ Sheet 6: Keap Working ============
-  // Tag rules (NLOW):
+  // Tag rules (NLOW). The "not in opt-in" tag pair is deliberately
+  // unhyphenated (NLOW2,NLOWDDMMYY) — NLOW3/NLOW4 keep the hyphenated
+  // -DDMMYY suffix.
   //   Show-up + in opt-in + NOT signed up         → NLOW3,NLOW3-DDMMYY
   //   Show-up + in opt-in + signed up             → NLOW3,NLOW3-DDMMYY,NLOW4,NLOW4-DDMMYY
-  //   Show-up NOT in opt-in + NOT signed up       → NLOW3,NLOW3-DDMMYY,NLOW2,NLOW2-DDMMYY
-  //   Show-up NOT in opt-in + signed up           → NLOW3,NLOW3-DDMMYY,NLOW4,NLOW4-DDMMYY,NLOW2,NLOW2-DDMMYY
+  //   Show-up NOT in opt-in + NOT signed up       → NLOW3,NLOW3-DDMMYY,NLOW2,NLOWDDMMYY
+  //   Show-up NOT in opt-in + signed up           → NLOW3,NLOW3-DDMMYY,NLOW4,NLOW4-DDMMYY,NLOW2,NLOWDDMMYY
   //   Sign-up only (no show-up) + in opt-in       → NLOW4,NLOW4-DDMMYY
-  //   Sign-up only (no show-up) + NOT in opt-in   → NLOW4,NLOW4-DDMMYY,NLOW2,NLOW2-DDMMYY
+  //   Sign-up only (no show-up) + NOT in opt-in   → NLOW4,NLOW4-DDMMYY,NLOW2,NLOWDDMMYY
   const ddmmyy = formatDDMMYY(session.sessionDate);
   const hasDate = ddmmyy.length === 6;
   const g3 = hasDate ? `NLOW3,NLOW3-${ddmmyy}` : "NLOW3";
   const g4 = hasDate ? `NLOW4,NLOW4-${ddmmyy}` : "NLOW4";
-  const g2 = hasDate ? `NLOW2,NLOW2-${ddmmyy}` : "NLOW2";
+  const g2 = hasDate ? `NLOW2,NLOW${ddmmyy}` : "NLOW2";
 
   const handledEmails = new Set<string>();
   type WorkingRow = { first: string; email: string; phone: string; tags: string };

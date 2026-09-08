@@ -11,6 +11,7 @@ import type {
   StudentListRow,
 } from "../../../shared/schema";
 import { parseCsv, parseCsvSkipRows, getVal } from "./csvParse";
+import { deriveMetrics } from "./deriveMetrics";
 
 // ============ Helpers ============
 
@@ -134,6 +135,27 @@ function parseKeapRows(rows: Record<string, any>[]): KeapRow[] {
     .filter((r) => r.email);
 }
 
+// Flags opt-ins as INVALID when their phone number is a strong gibberish
+// signal: shared identically across 3+ contacts, or contains a run of 6+
+// of the same digit. Never flags on name/email — real people legitimately
+// use their name as their email prefix.
+function applyGibberishHeuristic(rows: KeapRow[]): void {
+  const phoneCounts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.fullPhone) {
+      phoneCounts.set(r.fullPhone, (phoneCounts.get(r.fullPhone) || 0) + 1);
+    }
+  }
+  const repeatedDigitRun = /(\d)\1{5,}/; // same digit 6+ times in a row
+  for (const r of rows) {
+    const sharedPhone = !!r.fullPhone && (phoneCounts.get(r.fullPhone) || 0) >= 3;
+    const placeholderPhone = !!r.fullPhone && repeatedDigitRun.test(r.fullPhone);
+    if (sharedPhone || placeholderPhone) {
+      r.country = "INVALID";
+    }
+  }
+}
+
 interface RegRow {
   first: string;
   last: string;
@@ -201,6 +223,14 @@ interface TCRow {
   pricingOption: string;
   packageName: string;
   orderDate: string;
+  processor: "Stripe" | "PayPal";
+}
+
+// ThriveCart's "processor" column names the actual payment gateway used for
+// the sale. Anything not explicitly PayPal is treated as Stripe, since
+// that's the processor ThriveCart uses for the vast majority of sales here.
+function normalizeProcessor(raw: string): "Stripe" | "PayPal" {
+  return raw.toLowerCase().includes("paypal") ? "PayPal" : "Stripe";
 }
 
 function parseTCRows(rows: Record<string, any>[]): TCRow[] {
@@ -247,6 +277,9 @@ function parseTCRows(rows: Record<string, any>[]): TCRow[] {
           "Item Name",
         ]),
         orderDate: getVal(r, ["order_date", "Order Date", "date"]),
+        processor: normalizeProcessor(
+          getVal(r, ["processor", "Processor", "payment_processor", "gateway"])
+        ),
       };
     })
     .filter((r) => r.email);
@@ -393,6 +426,7 @@ export async function generateReport(
   ]);
 
   const keap = parseKeapRows(keapRaw);
+  applyGibberishHeuristic(keap);
   const reg = parseRegRows(regRaw);
   const part = parsePartRows(partRaw);
   const tc = parseTCRows(tcRaw);
@@ -475,7 +509,7 @@ export async function generateReport(
       phoneNumber: resolved.local,
       fullPhone: resolved.fullPhone,
       country: resolved.country,
-      source: "ThriveCart",
+      source: r.processor,
       pricingOption: r.packageName || r.pricingOption,
       intake: extractIntake(`${r.packageName || ""} ${r.pricingOption || ""} ${r.orderDate || ""}`),
       total: r.total,
@@ -490,20 +524,8 @@ export async function generateReport(
   for (const r of bt) {
     const existing = r.email ? seenSignupEmails.get(r.email) : undefined;
     if (existing) {
-      existing.source = "ThriveCart+BT";
-      // Preserve BT row's intake / price if the TC row didn't have them
-      if (!existing.intake && r.intake) existing.intake = r.intake;
-      if ((!existing.total || existing.total <= 0) && r.price > 0) {
-        existing.total = r.price;
-      }
-      // Prefer the BT row's name when the TC row's name was missing or
-      // just an email fallback. The PayNow file always has an explicit Name
-      // column, so its value is usually more authoritative.
-      const tcNameMissing =
-        !existing.fullName || existing.fullName === existing.email;
-      if (tcNameMissing && r.fullName) {
-        existing.fullName = r.fullName;
-      }
+      // Already recorded via ThriveCart — keep their Stripe/PayPal source
+      // rather than a separate combined category.
       continue;
     }
     const resolved = resolvePhoneAndCountry(r.email, r.phone);
@@ -619,6 +641,7 @@ export async function generateReport(
     country: k.country,
     showedUp: partEmails.has(k.email),
     signedUp: signUpEmails.has(k.email),
+    source: "keap",
   }));
   for (const s of showUpMerge) {
     if (s.source === "Keap") continue; // already in optInRows by email/phone
@@ -632,69 +655,13 @@ export async function generateReport(
       country: s.country,
       showedUp: true,
       signedUp: s.signedUp,
+      source: "showup_only",
     });
   }
 
-  // ===== Country breakdowns =====
-  const tally = (rows: { country: CountryGroup }[]): CountryBreakdown => {
-    const out: CountryBreakdown = {
-      SG: 0,
-      MY: 0,
-      USA: 0,
-      HK: 0,
-      OTHERS: 0,
-      INVALID: 0,
-      NA: 0,
-    };
-    for (const r of rows) out[r.country]++;
-    return out;
-  };
-
-  const optInByCountry = tally(optInRows);
-  const showUpByCountry = tally(showUpMerge);
-  const signUpByCountry = tally(signUpRows);
-
-  // ===== Metrics =====
-  const optInCount = optInRows.length;
-  const invalidCount = optInByCountry.INVALID;
-  const naCount = optInByCountry.NA;
-  const optInWithoutInvalidCount = optInCount - invalidCount - naCount;
-  const showUpCount = showUpMerge.length;
-  const showUpPct = optInCount > 0 ? (showUpCount / optInCount) * 100 : 0;
-  const attendanceAtPitch = session.attendanceAtPitch ?? 0;
-  const attendanceAtPitchPct =
-    showUpCount > 0 ? (attendanceAtPitch / showUpCount) * 100 : 0;
-  const signUpCount = signUpRows.length;
-  const signUpPct =
-    attendanceAtPitch > 0 ? (signUpCount / attendanceAtPitch) * 100 : 0;
-  // Revenue: sum each sign-up's actual total (TC carries its own line total;
-  // BT uses its row Price, falling back to session.programPrice if blank)
-  const revenueTotal = signUpRows.reduce(
-    (sum, s) => sum + (Number(s.total) || 0),
-    0
-  );
-  // VW intake totals: each VW row's pastSignups + count of sign-ups whose intake matches
-  const signUpsByIntakeForVW: Record<string, number> = {};
-  for (const vw of session.vwDates || []) {
-    if (!vw.label) continue;
-    const monthSignups = signUpRows.filter(
-      (s) => (s.intake || "").toLowerCase() === vw.label.toLowerCase()
-    ).length;
-    signUpsByIntakeForVW[vw.label] = (vw.pastSignups || 0) + monthSignups;
-  }
-
-  const metrics: PreviewMetrics = {
-    optInCount,
-    optInWithoutInvalidCount,
-    showUpCount,
-    showUpPct,
-    attendanceAtPitch,
-    attendanceAtPitchPct,
-    signUpCount,
-    signUpPct,
-    revenueTotal,
-    signUpsByIntakeForVW,
-  };
+  // ===== Country breakdowns + metrics =====
+  const { metrics, optInByCountry, showUpByCountry, signUpByCountry } =
+    deriveMetrics(session, optInRows, showUpMerge, signUpRows);
 
   // ===== Student List =====
   const previewDate = formatSessionDateLong(session.sessionDate, 0);
@@ -702,8 +669,8 @@ export async function generateReport(
   const mte = monthsToExpire(session.sessionDate);
   const fee = (session.programPrice || 0).toFixed(2);
   const studentList: StudentListRow[] = signUpRows.map((s) => {
-    const isBT = s.source === "BT";
-    const gateway = isBT ? "Bank Transfer" : "stripe";
+    const gateway =
+      s.source === "BT" ? "Bank Transfer" : s.source === "PayPal" ? "paypal" : "stripe";
     const ccLabel: CountryGroup = s.country;
     return {
       packageSold: s.pricingOption || "",
