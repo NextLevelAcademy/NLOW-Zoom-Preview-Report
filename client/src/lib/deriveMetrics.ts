@@ -5,6 +5,7 @@ import type {
   PreviewMetrics,
   SessionDetails,
   ShowUpMergeRow,
+  ShowUpNotInOptInRow,
   SignUpRow,
 } from "../../../shared/schema";
 
@@ -13,6 +14,7 @@ export interface DerivedReportSlice {
   optInByCountry: CountryBreakdown;
   showUpByCountry: CountryBreakdown;
   signUpByCountry: CountryBreakdown;
+  showUpsNotInOptIn: ShowUpNotInOptInRow[];
 }
 
 /**
@@ -58,6 +60,24 @@ export function deriveMetrics(
     optInWithoutInvalidCount > 0
       ? (showUpCount / optInWithoutInvalidCount) * 100
       : 0;
+  // Live re-derived (not a frozen per-row flag) so that fixing a mismatched
+  // email/phone on the report page — e.g. correcting a typo so it now
+  // matches a genuine Keap opt-in — immediately drops that person out of
+  // this list instead of staying stuck with their original classification.
+  const keapOptInEmails = new Set(
+    optInRows
+      .filter((r) => r.source === "keap")
+      .map((r) => (r.email || "").toLowerCase())
+      .filter(Boolean)
+  );
+  const showUpsNotInOptIn: ShowUpNotInOptInRow[] = showUpMerge
+    .filter((r) => !keapOptInEmails.has((r.email || "").toLowerCase()))
+    .map((r) => ({
+      fullName: r.fullName,
+      email: r.email,
+      fullPhone: r.fullPhone,
+      country: r.country,
+    }));
   const attendanceAtPitch = session.attendanceAtPitch ?? 0;
   const attendanceAtPitchPct =
     showUpCount > 0 ? (attendanceAtPitch / showUpCount) * 100 : 0;
@@ -93,5 +113,5 @@ export function deriveMetrics(
     signUpsByIntakeForVW,
   };
 
-  return { metrics, optInByCountry, showUpByCountry, signUpByCountry };
+  return { metrics, optInByCountry, showUpByCountry, signUpByCountry, showUpsNotInOptIn };
 }

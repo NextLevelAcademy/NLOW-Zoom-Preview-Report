@@ -146,6 +146,13 @@ export interface StudentListRow {
   paymentGateway: string; // "stripe" or "Bank Transfer"
 }
 
+export interface ShowUpNotInOptInRow {
+  fullName: string;
+  email: string;
+  fullPhone: string;
+  country: CountryGroup;
+}
+
 export interface CountryBreakdown {
   SG: number;
   MY: number;
@@ -167,6 +174,7 @@ export interface ReportData {
   showUpReg: ShowUpRegRow[];
   signUps: SignUpRow[];
   studentList: StudentListRow[];
+  showUpsNotInOptIn: ShowUpNotInOptInRow[];
   generatedAt: string;
   // Tag 4 List exclusion (NLOW4) — contacts in the uploaded Tag 4 CSV are
   // filtered out of the No Show Up broadcast. Match by normalized phone

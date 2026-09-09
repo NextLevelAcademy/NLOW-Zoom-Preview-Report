@@ -660,7 +660,7 @@ export async function generateReport(
   }
 
   // ===== Country breakdowns + metrics =====
-  const { metrics, optInByCountry, showUpByCountry, signUpByCountry } =
+  const { metrics, optInByCountry, showUpByCountry, signUpByCountry, showUpsNotInOptIn } =
     deriveMetrics(session, optInRows, showUpMerge, signUpRows);
 
   // ===== Student List =====
@@ -702,6 +702,7 @@ export async function generateReport(
     showUpReg,
     signUps: signUpRows,
     studentList,
+    showUpsNotInOptIn,
     generatedAt: new Date().toISOString(),
     nlow4ExcludedPhones,
     nlow4ExcludedEmails,
