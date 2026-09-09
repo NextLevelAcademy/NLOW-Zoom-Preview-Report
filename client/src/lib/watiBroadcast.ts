@@ -60,10 +60,9 @@ function titleCase(s: string): string {
 // Per-month WATI template override. Months not listed here fall back to the
 // default welcome template.
 const WELCOME_TEMPLATE_OVERRIDES: Record<string, string> = {
-  may: "nlow_welcome_wati_01",
   june: "nlow_welcome_wati_02",
 };
-const DEFAULT_WELCOME_TEMPLATE = "nlow_welcome_wati_01";
+const DEFAULT_WELCOME_TEMPLATE = "l2nlmba_tgreminder_update_v1";
 
 function synthWelcomeDefinition(vwLabel: string): BroadcastDefinition {
   const month = titleCase(vwLabel);
