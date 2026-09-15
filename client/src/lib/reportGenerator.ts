@@ -430,9 +430,10 @@ export async function generateReport(
   const reg = parseRegRows(regRaw);
   const part = parsePartRows(partRaw);
   // Sum each attendee's total time in the room across all their join
-  // records, then drop anyone who was in for MIN_SHOWUP_MINUTES or less —
+  // records, then drop anyone who was in for under MIN_SHOWUP_MINUTES —
   // a few-minute blip isn't a real show-up, so they're tagged as a no-show
   // everywhere (opt-in "showed up" flag, no-show broadcast, Show Up Merge).
+  // Exactly MIN_SHOWUP_MINUTES still counts as a show-up.
   const MIN_SHOWUP_MINUTES = 10;
   const partDedupMap = new Map<string, PartRow & { totalDuration: number }>();
   for (const p of part) {
@@ -445,7 +446,7 @@ export async function generateReport(
     }
   }
   const partDedup = Array.from(partDedupMap.values()).filter(
-    (p) => p.totalDuration > MIN_SHOWUP_MINUTES
+    (p) => p.totalDuration >= MIN_SHOWUP_MINUTES
   );
   const tc = parseTCRows(tcRaw);
   const bt = parseBTRows(btRaw);
