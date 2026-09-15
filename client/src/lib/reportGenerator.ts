@@ -429,6 +429,24 @@ export async function generateReport(
   applyGibberishHeuristic(keap);
   const reg = parseRegRows(regRaw);
   const part = parsePartRows(partRaw);
+  // Sum each attendee's total time in the room across all their join
+  // records, then drop anyone who was in for MIN_SHOWUP_MINUTES or less —
+  // a few-minute blip isn't a real show-up, so they're tagged as a no-show
+  // everywhere (opt-in "showed up" flag, no-show broadcast, Show Up Merge).
+  const MIN_SHOWUP_MINUTES = 10;
+  const partDedupMap = new Map<string, PartRow & { totalDuration: number }>();
+  for (const p of part) {
+    if (!p.email) continue;
+    const ex = partDedupMap.get(p.email);
+    if (ex) {
+      ex.totalDuration = (ex.totalDuration || 0) + (p.durationMinutes || 0);
+    } else {
+      partDedupMap.set(p.email, { ...p, totalDuration: p.durationMinutes || 0 });
+    }
+  }
+  const partDedup = Array.from(partDedupMap.values()).filter(
+    (p) => p.totalDuration > MIN_SHOWUP_MINUTES
+  );
   const tc = parseTCRows(tcRaw);
   const bt = parseBTRows(btRaw);
   // Tag 4 List (NLOW4) — same Keap export format. Collect both normalized
@@ -453,7 +471,7 @@ export async function generateReport(
   const regByEmail = new Map<string, RegRow>();
   for (const r of reg) regByEmail.set(r.email, r);
   const partByEmail = new Map<string, PartRow>();
-  for (const p of part) partByEmail.set(p.email, p);
+  for (const p of partDedup) partByEmail.set(p.email, p);
 
   // ===== Sign-ups (TC + BT) =====
   const signUpRows: SignUpRow[] = [];
@@ -555,20 +573,9 @@ export async function generateReport(
   const signUpEmails = new Set(
     signUpRows.map((s) => s.email).filter(Boolean)
   );
-  const partEmails = new Set(part.map((p) => p.email));
+  const partEmails = new Set(partDedup.map((p) => p.email));
 
   // ===== Show up Merge (one row per UNIQUE participant email; sum durations) =====
-  const partDedupMap = new Map<string, PartRow & { totalDuration: number }>();
-  for (const p of part) {
-    if (!p.email) continue;
-    const ex = partDedupMap.get(p.email);
-    if (ex) {
-      ex.totalDuration = (ex.totalDuration || 0) + (p.durationMinutes || 0);
-    } else {
-      partDedupMap.set(p.email, { ...p, totalDuration: p.durationMinutes || 0 });
-    }
-  }
-  const partDedup = Array.from(partDedupMap.values());
   const showUpMerge: ShowUpMergeRow[] = partDedup.map((p) => {
     let k = keapByEmail.get(p.email);
     const reg = regByEmail.get(p.email);
