@@ -81,7 +81,7 @@ export interface OptInRow {
   country: CountryGroup;
   showedUp: boolean;
   signedUp: boolean;
-  source: "keap" | "showup_only"; // showup_only = appended from Show Up, unmatched to a Keap opt-in
+  source: "keap" | "showup_only" | "signup_only"; // showup_only = appended from Show Up, unmatched to a Keap opt-in; signup_only = appended from Sign Up, unmatched to either
 }
 
 /** Show up Merge row — a row per participant joined with Keap/Registration. */
