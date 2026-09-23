@@ -1337,20 +1337,129 @@ function ReportView({
     });
   }
 
+  // The "Show Up" / "Signed Up" checkboxes in these tables are cross-list
+  // membership, not a plain field — Show Up % and Sign Up % come from the
+  // length of report.showUpMerge / report.signUps, not from these booleans.
+  // So toggling one must actually add/remove the person from the real list
+  // (and mirror the flag on the other two tables), or the checkbox would
+  // change nothing the percentages read.
+  function withShowUpToggled(
+    base: { optIns: OptInRow[]; showUpMerge: ShowUpMergeRow[]; signUps: SignUpRow[] },
+    email: string,
+    checked: boolean,
+    contact: { fullName: string; countryCode: string; phoneNumber: string; fullPhone: string; country: OptInRow["country"]; source?: string }
+  ) {
+    const emailLc = (email || "").toLowerCase();
+    if (!emailLc) return base;
+    const idx = base.showUpMerge.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+    let showUpMerge = base.showUpMerge;
+    if (checked && idx === -1) {
+      const signedUp = base.signUps.some((s) => (s.email || "").toLowerCase() === emailLc);
+      showUpMerge = [
+        ...showUpMerge,
+        {
+          fullName: contact.fullName,
+          email,
+          countryCode: contact.countryCode,
+          phoneNumber: contact.phoneNumber,
+          fullPhone: contact.fullPhone,
+          country: contact.country,
+          durationMinutes: 0,
+          source: contact.source === "keap" ? "Keap" : "Unknown",
+          signedUp,
+          signedUpEmail: signedUp ? email : "",
+        },
+      ];
+    } else if (!checked && idx !== -1) {
+      showUpMerge = showUpMerge.filter((_, i) => i !== idx);
+    }
+    return {
+      optIns: base.optIns.map((r) => ((r.email || "").toLowerCase() === emailLc ? { ...r, showedUp: checked } : r)),
+      showUpMerge,
+      signUps: base.signUps.map((r) => ((r.email || "").toLowerCase() === emailLc ? { ...r, showedUp: checked } : r)),
+    };
+  }
+
+  function withSignUpToggled(
+    base: { optIns: OptInRow[]; showUpMerge: ShowUpMergeRow[]; signUps: SignUpRow[] },
+    email: string,
+    checked: boolean,
+    contact: { fullName: string; countryCode: string; phoneNumber: string; fullPhone: string; country: OptInRow["country"] }
+  ) {
+    const emailLc = (email || "").toLowerCase();
+    if (!emailLc) return base;
+    const idx = base.signUps.findIndex((r) => (r.email || "").toLowerCase() === emailLc);
+    let signUps = base.signUps;
+    if (checked && idx === -1) {
+      signUps = [
+        ...signUps,
+        {
+          fullName: contact.fullName,
+          email,
+          countryCode: contact.countryCode,
+          phoneNumber: contact.phoneNumber,
+          fullPhone: contact.fullPhone,
+          country: contact.country,
+          // No sale data available from a manual toggle — added blank so it
+          // can be filled in directly in the Sign Up table below.
+          source: "BT",
+          pricingOption: "",
+          intake: "",
+          total: 0,
+          orderDate: "",
+          showedUp: base.showUpMerge.some((s) => (s.email || "").toLowerCase() === emailLc),
+          inOptIn: true,
+        },
+      ];
+    } else if (!checked && idx !== -1) {
+      signUps = signUps.filter((_, i) => i !== idx);
+    }
+    return {
+      optIns: base.optIns.map((r) => ((r.email || "").toLowerCase() === emailLc ? { ...r, signedUp: checked } : r)),
+      showUpMerge: base.showUpMerge.map((r) =>
+        (r.email || "").toLowerCase() === emailLc
+          ? { ...r, signedUp: checked, signedUpEmail: checked ? r.email : "" }
+          : r
+      ),
+      signUps,
+    };
+  }
+
   function updateOptIn(idx: number, patch: Partial<OptInRow>) {
-    recompute({ optIns: report.optIns.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+    const row = report.optIns[idx];
+    const optIns = report.optIns.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    let next = { optIns, showUpMerge: report.showUpMerge, signUps: report.signUps };
+    if (patch.showedUp !== undefined && patch.showedUp !== row.showedUp) {
+      next = withShowUpToggled(next, row.email, patch.showedUp, row);
+    }
+    if (patch.signedUp !== undefined && patch.signedUp !== row.signedUp) {
+      next = withSignUpToggled(next, row.email, patch.signedUp, row);
+    }
+    recompute(next);
   }
   function deleteOptIn(idx: number) {
     recompute({ optIns: report.optIns.filter((_, i) => i !== idx) });
   }
   function updateShowUp(idx: number, patch: Partial<ShowUpMergeRow>) {
-    recompute({ showUpMerge: report.showUpMerge.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+    const row = report.showUpMerge[idx];
+    const showUpMerge = report.showUpMerge.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    let next = { optIns: report.optIns, showUpMerge, signUps: report.signUps };
+    if (patch.signedUp !== undefined && patch.signedUp !== row.signedUp) {
+      next = withSignUpToggled(next, row.email, patch.signedUp, row);
+    }
+    recompute(next);
   }
   function deleteShowUp(idx: number) {
     recompute({ showUpMerge: report.showUpMerge.filter((_, i) => i !== idx) });
   }
   function updateSignUp(idx: number, patch: Partial<SignUpRow>) {
-    recompute({ signUps: report.signUps.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
+    const row = report.signUps[idx];
+    const signUps = report.signUps.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    let next = { optIns: report.optIns, showUpMerge: report.showUpMerge, signUps };
+    if (patch.showedUp !== undefined && patch.showedUp !== row.showedUp) {
+      next = withShowUpToggled(next, row.email, patch.showedUp, row);
+    }
+    recompute(next);
   }
   function deleteSignUp(idx: number) {
     recompute({ signUps: report.signUps.filter((_, i) => i !== idx) });
