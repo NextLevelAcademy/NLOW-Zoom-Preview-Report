@@ -19,6 +19,14 @@ function digits(s: string | null | undefined): string {
   return (s || "").replace(/\D/g, "");
 }
 
+// Some Keap exports have the "65" country code typed twice (e.g. a contact
+// enters "+6594682910" and Keap's own cc column adds another "65" on top,
+// producing "656594682910"). Only strips an exact leading "6565" — a
+// number like "650122123318" that merely starts with "65" is left alone.
+function stripDoubled65(d: string): string {
+  return d.startsWith("6565") ? d.slice(2) : d;
+}
+
 /**
  * Parse a Keap / Zoom-style phone like:
  *   `'+65 87661449   `   → cc=65, phone=87661449
@@ -44,7 +52,7 @@ function parseApostrophePhone(raw: string): { cc: string; local: string } {
       return { cc, local };
     }
     // No space — try to split a known country code prefix
-    const d = digits(afterPlus);
+    const d = stripDoubled65(digits(afterPlus));
     if (d.startsWith("65") && d.length >= 10) return { cc: "65", local: d.slice(2) };
     if (d.startsWith("60") && d.length >= 11) return { cc: "60", local: d.slice(2) };
     if (d.startsWith("852") && d.length >= 11) return { cc: "852", local: d.slice(3) };
@@ -54,7 +62,7 @@ function parseApostrophePhone(raw: string): { cc: string; local: string } {
     return { cc: "", local: d };
   }
   // No leading +: could be a raw 8-digit SG local, or country-code-included intl
-  const d = digits(s);
+  const d = stripDoubled65(digits(s));
   if (!d) return { cc: "", local: "" };
   // 8-digit SG local (starts with 6,8,9)
   if (d.length === 8 && /^[689]/.test(d)) return { cc: "65", local: d };
