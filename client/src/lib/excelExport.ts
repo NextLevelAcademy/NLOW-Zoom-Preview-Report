@@ -426,6 +426,25 @@ export function downloadExcelReport(report: ReportData): void {
   studentSheet["!cols"] = studentHeader.map(() => ({ wch: 16 }));
   XLSX.utils.book_append_sheet(wb, studentSheet, "Student List");
 
+  // ============ Sheet 9: Excluded Under 10 Min ============
+  // Participants whose total time in the room was under the show-up minutes
+  // threshold, so they were excluded from Show Up Merge / the show-up count.
+  const shortDurData: any[][] = [
+    ["Name", "Email", "Phone Number", "Country", "Duration (min)"],
+    ...report.shortDurationExclusions.map((r) => [
+      r.fullName,
+      r.email,
+      r.fullPhone,
+      r.country,
+      r.durationMinutes,
+    ]),
+  ];
+  const shortDurSheet = XLSX.utils.aoa_to_sheet(shortDurData);
+  shortDurSheet["!cols"] = [
+    { wch: 22 }, { wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 14 },
+  ];
+  XLSX.utils.book_append_sheet(wb, shortDurSheet, "Excluded Under 10 Min");
+
   // Filename
   const safeDate = ddmmyy || new Date().toISOString().split("T")[0].replace(/-/g, "");
   const filename = `NLOW-Zoom-Preview-Report-${safeDate}.xlsx`;

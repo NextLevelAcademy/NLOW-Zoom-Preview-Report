@@ -816,6 +816,103 @@ const SHOW_UP_SOURCE_OPTIONS: ShowUpMergeRow["source"][] = [
   "Keap", "Registration", "Unknown",
 ];
 
+function ShortDurationTable({
+  rows,
+  onUpdate,
+  onPromote,
+  onDelete,
+}: {
+  rows: ShowUpMergeRow[];
+  onUpdate: (idx: number, patch: Partial<ShowUpMergeRow>) => void;
+  onPromote: (idx: number) => void;
+  onDelete: (idx: number) => void;
+}) {
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h3 className="font-semibold text-sm text-foreground">
+          Excluded — Under 10 Minutes ({rows.length})
+        </h3>
+        <span className="text-xs text-muted-foreground">click any cell to edit</span>
+      </div>
+      <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 sticky top-0">
+            <tr>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">#</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Name</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Email</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Phone</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Country</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap">Duration (min)</th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap"></th>
+              <th className="px-4 py-2.5 text-left font-medium text-muted-foreground whitespace-nowrap"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr
+                key={`${r.email}-${i}`}
+                className="border-t border-border/50 bg-amber-50/50 dark:bg-amber-950/10"
+                data-testid={`shortdur-row-${i}`}
+              >
+                <td className="px-4 py-1 text-muted-foreground">{i + 1}</td>
+                <td className="px-4 py-1 font-medium text-foreground">
+                  <EditableText
+                    value={r.fullName}
+                    onCommit={(v) => onUpdate(i, { fullName: v })}
+                    testId={`shortdur-name-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 text-muted-foreground">
+                  <EditableText
+                    value={r.email}
+                    onCommit={(v) => onUpdate(i, { email: v })}
+                    testId={`shortdur-email-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableText
+                    value={r.fullPhone}
+                    onCommit={(v) => onUpdate(i, { fullPhone: v })}
+                    testId={`shortdur-phone-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <CountrySelect
+                    value={r.country}
+                    onCommit={(v) => onUpdate(i, { country: v as ShowUpMergeRow["country"] })}
+                    testId={`shortdur-country-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1 tabular-nums">
+                  <EditableNumber
+                    value={r.durationMinutes}
+                    onCommit={(v) => onUpdate(i, { durationMinutes: v })}
+                    testId={`shortdur-duration-${i}`}
+                  />
+                </td>
+                <td className="px-4 py-1">
+                  <button
+                    onClick={() => onPromote(i)}
+                    data-testid={`shortdur-promote-${i}`}
+                    className="text-[11px] font-medium text-primary hover:underline whitespace-nowrap"
+                  >
+                    Count as Show Up
+                  </button>
+                </td>
+                <td className="px-4 py-1">
+                  <DeleteRowButton onClick={() => onDelete(i)} testId={`shortdur-delete-${i}`} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ShowUpMergeTable({
   rows,
   onUpdate,
@@ -1320,11 +1417,13 @@ function ReportView({
     optIns?: OptInRow[];
     showUpMerge?: ShowUpMergeRow[];
     signUps?: SignUpRow[];
+    shortDurationExclusions?: ShowUpMergeRow[];
     sessionDetails?: SessionDetails;
   }) {
     const optIns = next.optIns ?? report.optIns;
     const showUpMerge = next.showUpMerge ?? report.showUpMerge;
     const signUps = next.signUps ?? report.signUps;
+    const shortDurationExclusions = next.shortDurationExclusions ?? report.shortDurationExclusions;
     const sessionDetails = next.sessionDetails ?? report.sessionDetails;
     const derived = deriveMetrics(sessionDetails, optIns, showUpMerge, signUps);
     onReportChange({
@@ -1333,6 +1432,7 @@ function ReportView({
       optIns,
       showUpMerge,
       signUps,
+      shortDurationExclusions,
       ...derived,
     });
   }
@@ -1451,6 +1551,26 @@ function ReportView({
   }
   function deleteShowUp(idx: number) {
     recompute({ showUpMerge: report.showUpMerge.filter((_, i) => i !== idx) });
+  }
+  // Promote a short-duration exclusion into a real Show Up — removes it from
+  // the review list and adds it to showUpMerge (mirroring the Show Up flag
+  // on Opt-In/Sign Up too) via the same cross-list toggle used elsewhere.
+  function promoteShortDuration(idx: number) {
+    const row = report.shortDurationExclusions[idx];
+    const shortDurationExclusions = report.shortDurationExclusions.filter((_, i) => i !== idx);
+    let next = { optIns: report.optIns, showUpMerge: report.showUpMerge, signUps: report.signUps };
+    next = withShowUpToggled(next, row.email, true, row);
+    recompute({ ...next, shortDurationExclusions });
+  }
+  function updateShortDurationExclusion(idx: number, patch: Partial<ShowUpMergeRow>) {
+    recompute({
+      shortDurationExclusions: report.shortDurationExclusions.map((r, i) =>
+        i === idx ? { ...r, ...patch } : r
+      ),
+    });
+  }
+  function deleteShortDurationExclusion(idx: number) {
+    recompute({ shortDurationExclusions: report.shortDurationExclusions.filter((_, i) => i !== idx) });
   }
   function updateSignUp(idx: number, patch: Partial<SignUpRow>) {
     const row = report.signUps[idx];
@@ -1683,6 +1803,17 @@ function ReportView({
       <div className="mb-6">
         <ShowUpMergeTable rows={report.showUpMerge} onUpdate={updateShowUp} onDelete={deleteShowUp} />
       </div>
+
+      {report.shortDurationExclusions.length > 0 && (
+        <div className="mb-6">
+          <ShortDurationTable
+            rows={report.shortDurationExclusions}
+            onUpdate={updateShortDurationExclusion}
+            onPromote={promoteShortDuration}
+            onDelete={deleteShortDurationExclusion}
+          />
+        </div>
+      )}
 
       {notInOptInEntries.length > 0 && (
         <div className="mb-6">

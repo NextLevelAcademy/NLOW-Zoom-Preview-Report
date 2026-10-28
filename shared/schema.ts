@@ -175,6 +175,10 @@ export interface ReportData {
   signUps: SignUpRow[];
   studentList: StudentListRow[];
   showUpsNotInOptIn: ShowUpNotInOptInRow[];
+  // Participants whose total time in the room was under the show-up minutes
+  // threshold — excluded from showUpMerge/showUpCount, kept here so they can
+  // be reviewed and manually promoted into Show Up if the exclusion was wrong.
+  shortDurationExclusions: ShowUpMergeRow[];
   generatedAt: string;
   // Tag 4 List exclusion (NLOW4) — contacts in the uploaded Tag 4 CSV are
   // filtered out of the No Show Up broadcast. Match by normalized phone
