@@ -438,13 +438,8 @@ export async function generateReport(
   const reg = parseRegRows(regRaw);
   const part = parsePartRows(partRaw);
   // Sum each attendee's total time in the room across all their join
-  // records, then drop anyone who was in for under MIN_SHOWUP_MINUTES —
-  // a few-minute blip isn't a real show-up, so they're tagged as a no-show
-  // everywhere (opt-in "showed up" flag, no-show broadcast, Show Up Merge).
-  // Exactly MIN_SHOWUP_MINUTES still counts as a show-up. Kept unfiltered
-  // here (partDedupIncluded is the filtered view) so the excluded ones can
-  // still be shown on a review tab further down.
-  const MIN_SHOWUP_MINUTES = 10;
+  // records into one deduped row per email — anyone who joined at all
+  // counts as a show-up, however long they stayed.
   const partDedupMap = new Map<string, PartRow & { totalDuration: number }>();
   for (const p of part) {
     if (!p.email) continue;
@@ -456,7 +451,6 @@ export async function generateReport(
     }
   }
   const partDedup = Array.from(partDedupMap.values());
-  const partDedupIncluded = partDedup.filter((p) => p.totalDuration >= MIN_SHOWUP_MINUTES);
   const tc = parseTCRows(tcRaw);
   const bt = parseBTRows(btRaw);
   // Tag 4 List (NLOW4) — same Keap export format. Collect both normalized
@@ -481,7 +475,7 @@ export async function generateReport(
   const regByEmail = new Map<string, RegRow>();
   for (const r of reg) regByEmail.set(r.email, r);
   const partByEmail = new Map<string, PartRow>();
-  for (const p of partDedupIncluded) partByEmail.set(p.email, p);
+  for (const p of partDedup) partByEmail.set(p.email, p);
 
   // ===== Sign-ups (TC + BT) =====
   const signUpRows: SignUpRow[] = [];
@@ -583,13 +577,10 @@ export async function generateReport(
   const signUpEmails = new Set(
     signUpRows.map((s) => s.email).filter(Boolean)
   );
-  const partEmails = new Set(partDedupIncluded.map((p) => p.email));
+  const partEmails = new Set(partDedup.map((p) => p.email));
 
   // ===== Show up Merge (one row per UNIQUE participant email; sum durations) =====
-  // Mapped over every deduped participant (not just those meeting the
-  // MIN_SHOWUP_MINUTES threshold) so the excluded ones below still get the
-  // same name/country enrichment for their own review tab.
-  const showUpMergeAll: ShowUpMergeRow[] = partDedup.map((p) => {
+  const showUpMerge: ShowUpMergeRow[] = partDedup.map((p) => {
     let k = keapByEmail.get(p.email);
     const reg = regByEmail.get(p.email);
     // Fallback: if no Keap match by email, try matching by the registration
@@ -631,8 +622,6 @@ export async function generateReport(
       signedUpEmail: signed ? p.email : "",
     };
   });
-  const showUpMerge = showUpMergeAll.filter((r) => r.durationMinutes >= MIN_SHOWUP_MINUTES);
-  const shortDurationExclusions = showUpMergeAll.filter((r) => r.durationMinutes < MIN_SHOWUP_MINUTES);
 
   // ===== Show up REG (one row per registrant) =====
   const showUpReg: ShowUpRegRow[] = reg.map((r) => ({
@@ -752,7 +741,6 @@ export async function generateReport(
     signUps: signUpRows,
     studentList,
     showUpsNotInOptIn,
-    shortDurationExclusions,
     generatedAt: new Date().toISOString(),
     nlow4ExcludedPhones,
     nlow4ExcludedEmails,
